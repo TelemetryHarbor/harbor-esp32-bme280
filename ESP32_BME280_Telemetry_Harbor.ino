@@ -13,7 +13,6 @@ const char* password = "WIFI_PASSWORD";
 const String apiUrl = "https://telemetryharbor.com/api/v1/ingest/ingest/Harbor_ID";
 const String apiKey = "API_KEY";
 const String shipId = "Living Room";
-const String cargoId = "Temperature";
 
 // BME280 setup
 Adafruit_BME280 bme; // I2C
