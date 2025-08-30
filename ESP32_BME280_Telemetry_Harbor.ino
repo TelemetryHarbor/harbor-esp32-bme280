@@ -2,157 +2,124 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 #include <WiFi.h>
-#include <HTTPClient.h>
-#include <time.h> // For NTP time
+#include "HarborClient.h"
+#include <time.h>
 
 // WiFi credentials
-const char* ssid = "WIFI_SSID";
+const char* ssid = "WIFI_NAME";
 const char* password = "WIFI_PASSWORD";
 
 // Telemetry Harbor API info
-const String apiUrl = "https://telemetryharbor.com/api/v1/ingest/ingest/Harbor_ID";
-const String apiKey = "API_KEY";
-const String shipId = "Living Room";
+const char* harborEndpoint = "API_ENDPOINT";
+const char* harborApiKey   = "API_KEY";
+const char* shipId         = "Living Room";
+
+HarborClient harbor(harborEndpoint, harborApiKey);
 
 // BME280 setup
-Adafruit_BME280 bme; // I2C
+Adafruit_BME280 bme;
 #define SEALEVELPRESSURE_HPA (1013.25)
 
-// LED setup
-const int ledPin = 2; // Use built-in LED on most ESP32 boards (usually GPIO 2)
+// Offsets
+const float TEMP_OFFSET = 0.0;     // e.g., -3.0
+const float HUMIDITY_OFFSET = 0.0; // e.g., +7.2
+const float PRESSURE_OFFSET = 0.0; // hPa, e.g., -2.5
+const float ALTITUDE_OFFSET = 0.0; // meters, e.g., +5.0
+
+// LED (GPIO2) off
+const int ledPin = 2;
 
 // NTP setup
 const char* ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 0; // Adjust this for your timezone offset
+const long gmtOffset_sec = 0;
 const int daylightOffset_sec = 0;
 
-// Time management
-unsigned long previousMillis = 0;
-const unsigned long intervalMillis = 60000; // 1-second interval
+// Sleep timing
+const uint64_t uS_TO_S_FACTOR = 1000000ULL;
+const int SLEEP_INTERVAL_SEC = 5 * 60; // 5 minutes
 
-// Function to flash the LED
-void flashLED(int times, int delayMs) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(ledPin, HIGH);
-    delay(delayMs);
-    digitalWrite(ledPin, LOW);
-    delay(delayMs);
-  }
-}
-
-// Function to connect to Wi-Fi
-void connectWiFi() {
-  Serial.println("Connecting to WiFi...");
-  WiFi.begin(ssid, password);
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.println("Connecting...");
-  }
-  Serial.println("Connected to WiFi!");
-  flashLED(3, 200); // Flash LED 3 times quickly
-}
-
-// Function to initialize time using NTP
-void initTime() {
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+// Get current UTC time as ISO8601
+String getISOTime() {
+  time_t now = time(NULL);
   struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    Serial.println("Failed to obtain time from NTP server.");
-    while (1); // Stay here if time sync fails
+  gmtime_r(&now, &timeinfo);
+
+  char buf[30];
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+  return String(buf);
+}
+
+// Connect WiFi with minimal retries
+bool connectWiFi() {
+  WiFi.begin(ssid, password);
+  int retries = 0;
+  while (WiFi.status() != WL_CONNECTED && retries < 15) {
+    delay(200);
+    retries++;
   }
-  Serial.println("Time synchronized successfully.");
+  return WiFi.status() == WL_CONNECTED;
 }
 
 void setup() {
+  // Reduce CPU frequency to save power during wake
+  setCpuFrequencyMhz(80);
+
+  // Disable user LED
+  pinMode(ledPin, OUTPUT);
+  digitalWrite(ledPin, LOW);
+
+  // Minimal serial
   Serial.begin(115200);
+  delay(100);
 
-  pinMode(ledPin, OUTPUT); // Set LED pin as output
-
-  // Initialize BME280 sensor
+  // Init BME280 in forced mode
   if (!bme.begin(0x76)) {
-    Serial.println("Could not find a valid BME280 sensor, check wiring!");
-    while (1);
+    esp_deep_sleep(SLEEP_INTERVAL_SEC * uS_TO_S_FACTOR); // try again later
+  }
+  bme.setSampling(Adafruit_BME280::MODE_FORCED);
+
+  // Connect Wi-Fi
+  if (!connectWiFi()) {
+    esp_deep_sleep(SLEEP_INTERVAL_SEC * uS_TO_S_FACTOR);
   }
 
-  // Connect to Wi-Fi and sync time
-  connectWiFi();
-  initTime();
+  // Sync time
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    esp_deep_sleep(SLEEP_INTERVAL_SEC * uS_TO_S_FACTOR);
+  }
+
+  // Read sensors (forced mode → sleeps after reading)
+  bme.takeForcedMeasurement();
+  float temperature = bme.readTemperature() + TEMP_OFFSET;
+  float humidity    = bme.readHumidity() + HUMIDITY_OFFSET;
+  float pressure    = (bme.readPressure() / 100.0F) + PRESSURE_OFFSET;
+  float altitude    = bme.readAltitude(SEALEVELPRESSURE_HPA) + ALTITUDE_OFFSET;
+
+  String isoTime = getISOTime();
+
+  // Prepare batch
+  GeneralReading readings[4];
+  readings[0] = {shipId, "Temperature", temperature, isoTime};
+  readings[1] = {shipId, "Humidity", humidity, isoTime};
+  readings[2] = {shipId, "Pressure", pressure, isoTime};
+  readings[3] = {shipId, "Altitude", altitude, isoTime};
+
+  // Send batch
+  harbor.sendBatch(readings, 4);
+
+  // Disconnect Wi-Fi before sleep
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+
+  // Deep sleep for 5 minutes
+  esp_sleep_enable_timer_wakeup(SLEEP_INTERVAL_SEC * uS_TO_S_FACTOR);
+  esp_deep_sleep_start();
 }
 
 void loop() {
-  // Check Wi-Fi connection
-  if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi(); // Reconnect if disconnected
-  }
-
-  // Measure elapsed time to push data every second
-  unsigned long currentMillis = millis();
-  if (currentMillis - previousMillis >= intervalMillis) {
-    previousMillis = currentMillis;
-
-
-    const float temperatureOffset = 0; // Adjust temperature by -3°C
-    const float humidityOffset = 0;    // Adjust humidity by +7.2%
-    // Read temperature and humidity
-    float temperature = bme.readTemperature() + temperatureOffset;
-    float humidity = bme.readHumidity() + humidityOffset;
-
-    // Get current time in ISO8601 format
-    time_t now = time(NULL);
-    struct tm timeinfo;
-    gmtime_r(&now, &timeinfo); // Convert to UTC time structure
-
-    char timeBuffer[30];
-    strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%dT%H:%M:%SZ", &timeinfo); // Format time
-
-    // Create JSON payload for temperature
-    String tempJsonPayload = "{";
-    tempJsonPayload += "\"time\": \"" + String(timeBuffer) + "\",";
-    tempJsonPayload += "\"ship_id\": \"" + shipId + "\",";
-    tempJsonPayload += "\"cargo_id\": \"Temperature\",";
-    tempJsonPayload += "\"value\": " + String(temperature, 2);
-    tempJsonPayload += "}";
-
-    // Create JSON payload for humidity
-    String humidityJsonPayload = "{";
-    humidityJsonPayload += "\"time\": \"" + String(timeBuffer) + "\",";
-    humidityJsonPayload += "\"ship_id\": \"" + shipId + "\",";
-    humidityJsonPayload += "\"cargo_id\": \"Humidity\",";
-    humidityJsonPayload += "\"value\": " + String(humidity, 2);
-    humidityJsonPayload += "}";
-
-    // Send temperature data to API
-    HTTPClient http;
-    http.begin(apiUrl);
-    http.addHeader("X-API-Key", apiKey);
-    http.addHeader("Content-Type", "application/json");
-
-    int tempResponseCode = http.POST(tempJsonPayload);
-    if (tempResponseCode > 0) {
-      Serial.println("Temperature data sent successfully! Response:");
-      Serial.println(http.getString());
-      flashLED(1, 300); // Flash LED for successful API request
-    } else {
-      Serial.print("Error sending temperature data. HTTP Response code: ");
-      Serial.println(tempResponseCode);
-    }
-    http.end();
-
-    // Send humidity data to API
-    http.begin(apiUrl); // Reinitialize HTTPClient for humidity request
-    http.addHeader("X-API-Key", apiKey);
-    http.addHeader("Content-Type", "application/json");
-
-    int humidityResponseCode = http.POST(humidityJsonPayload);
-    if (humidityResponseCode > 0) {
-      Serial.println("Humidity data sent successfully! Response:");
-      Serial.println(http.getString());
-      flashLED(1, 300); // Flash LED for successful API request
-    } else {
-      Serial.print("Error sending humidity data. HTTP Response code: ");
-      Serial.println(humidityResponseCode);
-    }
-    http.end();
-  }
+  // never used, everything runs in setup + deep sleep
 }
