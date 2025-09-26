@@ -2,7 +2,6 @@
 
 A power-efficient, cloud-connected environmental monitoring system using an **ESP32**, **BME280 sensor**, and **Telemetry Harbor**. The new code prioritizes ultra-low-power operation using deep sleep, making it ideal for battery-powered projects.
 
------
 
 ## Overview
 
@@ -17,7 +16,7 @@ This project wakes up at set intervals, takes a complete set of environmental re
   - **Cloud Connectivity**: Seamless data transmission to Telemetry Harbor.
   - **Beautiful Visualizations**: Ready-to-use Grafana dashboards for powerful data analysis.
 
------
+
 
 ## Hardware Requirements
 
@@ -29,7 +28,7 @@ This project wakes up at set intervals, takes a complete set of environmental re
 | Micro USB cable | For power & programming | $3.00 (AliExpress) / $5.00 (Amazon US) |
 | **Battery** | For long-term standalone, low-power deployment | (Cost varies) |
 
------
+
 
 ## Software Requirements
 
@@ -42,7 +41,7 @@ This project wakes up at set intervals, takes a complete set of environmental re
       - WiFi Library (built into ESP32 core)
   - [Telemetry Harbor](https://telemetryharbor.com) account (free tier available)
 
------
+
 
 ## Wiring Diagram
 
@@ -55,7 +54,7 @@ Connect the BME280 sensor to the ESP32 using I2C:
 | SDA | GPIO 21 | Data |
 | SCL | GPIO 22 | Clock |
 
------
+
 
 ## Setup Instructions
 
@@ -81,7 +80,7 @@ Connect the BME280 sensor to the ESP32 using I2C:
 1.  Create a [Telemetry Harbor](https://telemetryharbor.com) account.
 2.  Create a new Harbor called "ESP32\_Environmental\_Monitor" (or your preferred name).
 3.  Select "General" harbor type and "Free" specification.
-4.  Copy your Harbor ID and API Key from the Harbor details page.
+4.  Copy your API ENDPOINT and API Key from the Harbor details page.
 
 ### 4\. Configure and Upload the Code
 
@@ -102,7 +101,7 @@ Connect the BME280 sensor to the ESP32 using I2C:
 4.  Login with your Telemetry Harbor email and the Grafana password.
 5.  Navigate to Dashboards and select the Comprehensive Telemetry Dashboard to see your data.
 
------
+
 
 ## Customization
 
@@ -124,7 +123,7 @@ const float HUMIDITY_OFFSET = 0.0; // Adjust humidity by percentage
 const float PRESSURE_OFFSET = 0.0; // Adjust pressure by hPa
 ```
 
------
+
 
 ## Troubleshooting
 
@@ -138,7 +137,7 @@ const float PRESSURE_OFFSET = 0.0; // Adjust pressure by hPa
 
 The new code has minimal serial output to save power. To debug, add `Serial.println()` statements to the `setup()` function before the `esp_deep_sleep_start()` call. The **`loop()` function is intentionally empty** as all operations run in `setup()` before the device goes back to sleep.
 
------
+
 
 ## Contributing
 
